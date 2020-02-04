@@ -17,22 +17,24 @@ import io.circe.syntax._
 import org.http4s.EntityDecoder
 import org.http4s.circe._
 import org.http4s.EntityEncoder
+import cats.implicits._
+import org.http4s.client.blaze.BlazeClientBuilder
 
 object Main extends IOApp {
   object UserName extends QueryParamDecoderMatcher[String]("user_name")
 
-  object Age extends OptionalQueryParamDecoderMatcher[String]("age")
+  object Age extends OptionalQueryParamDecoderMatcher[Int]("age")
 
   object PhoneNumber extends OptionalMultiQueryParamDecoderMatcher[String]("phone")
 
-  case class Person(name: String, age: Option[String], phoneNumbers: List[String])
+  case class Person(name: String, age: Option[Int], phoneNumbers: List[String])
 
   object Person {
     implicit val personDecoder: Decoder[Person] = new Decoder[Person] {
       override def apply(c: HCursor): Decoder.Result[Person] =
         for {
           name <- c.get[String]("name")
-          age <- c.get[Option[String]]("age")
+          age <- c.get[Option[Int]]("age")
           phoneNumbers <- c.get[List[String]]("phone")
         } yield Person(name, age, phoneNumbers)
     }
@@ -50,7 +52,7 @@ object Main extends IOApp {
 
   }
 
-  def route: HttpApp[IO] =
+  def helloWorldRoutes: HttpRoutes[IO] =
     HttpRoutes
       .of[IO]({
         case GET -> Root / "hello" / name => Ok(s"Hello, ${name}")
@@ -76,11 +78,14 @@ object Main extends IOApp {
         case GET -> Root / "add" / "long" / LongVar(x) / LongVar(y) => Ok(s"Result is ${x + y}")
         case request @ GET -> Root / "header"                       => Ok(request.headers.toString)
       })
-      .orNotFound
-  override def run(args: List[String]): IO[ExitCode] =
-    BlazeServerBuilder[IO]
-      .bindHttp(8888, "0.0.0.0")
-      .withHttpApp(route)
-      .resource
-      .use(_ => IO.never)
+  override def run(args: List[String]): IO[ExitCode] = {
+    val resource = for {
+      client <- BlazeClientBuilder[IO](scala.concurrent.ExecutionContext.Implicits.global).resource
+      server <- BlazeServerBuilder[IO]
+        .bindHttp(8888, "0.0.0.0")
+        .withHttpApp((helloWorldRoutes <+> Employee.routes(client)).orNotFound)
+        .resource
+    } yield server
+    resource.use(_ => IO.never)
+  }
 }
